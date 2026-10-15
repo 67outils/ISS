@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transits ISS – secteur d'Altorf</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/5.0.0/satellite.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/astronomy-engine@2.1.19/astronomy.browser.min.js"></script>
+<style>
+:root{--bg:#f6f7f9;--fg:#1b1f24;--mut:#69727d;--card:#fff;--bd:#dde1e6;--ac:#c2410c;--ok:#15803d;--mid:#b45309;--lo:#b91c1c;--hl:#fff4e5;--sel:#e0ecff}
+@media (prefers-color-scheme:dark){:root{--bg:#12151a;--fg:#e8eaed;--mut:#9aa3ad;--card:#1b2027;--bd:#2d343d;--ac:#fb923c;--ok:#4ade80;--mid:#fbbf24;--lo:#f87171;--hl:#2b2418;--sel:#1e2f4d}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:1150px;margin:0 auto;padding:20px 14px 40px}
+h1{font-size:1.5rem;margin:0 0 2px}h2{font-size:1.05rem;margin:0 0 8px}
+.sub{color:var(--mut);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+.big{font-size:1.2rem;font-weight:600;color:var(--ac)}
+.lbl{color:var(--mut);font-size:.8rem;text-transform:uppercase;letter-spacing:.04em}
+.bar{height:6px;background:var(--bd);border-radius:3px;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;width:0;background:var(--ac)}
+.filters{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+button,select,input[type=number]{font:inherit;padding:4px 10px;border:1px solid var(--bd);border-radius:6px;background:var(--card);color:var(--fg)}
+button{cursor:pointer}input[type=number]{width:80px}
+#map{height:460px;border-radius:8px;border:1px solid var(--bd)}
+.wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.86rem}
+th,td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}
+th{color:var(--mut);font-weight:600;font-size:.76rem;text-transform:uppercase}
+#rows tr{cursor:pointer}#rows tr.s td{background:var(--sel)}tr.t td{background:var(--hl)}
+.b{font-weight:600}.ok{color:var(--ok)}.mid{color:var(--mid)}.lo{color:var(--lo)}
+small{color:var(--mut)}.warn{border-left:4px solid var(--lo)}
+</style>
+</head>
+<body>
+<main>
+<h1>🛰️ Transits de l'ISS – carte du secteur d'Altorf</h1>
+<p class="sub">Zone : 30 km autour d'Altorf (67120) · prévisions sur 2 mois · heures de Paris</p>
+
+<div class="grid">
+  <div class="card"><div class="lbl">Prochaine bande exploitable</div><div class="big" id="next">…</div><small id="nextd"></small></div>
+  <div class="card"><div class="lbl">Données orbitales (TLE)</div><div id="tle">Chargement…</div><small id="tleinfo"></small></div>
+  <div class="card"><div class="lbl">Calcul sur 2 mois</div><div id="stat">…</div><div class="bar"><i id="prog"></i></div></div>
+</div>
+
+<div class="card warn"><b>Fiabilité :</b> la position des bandes dépend des éléments orbitaux de l'ISS, précis seulement quelques jours (« Bonne » ≤ 3 jours, « Indicative » au-delà). La page se met à jour seule et affine les prédictions à mesure qu'elles approchent.
+<br><b>⚠ Soleil :</b> jamais d'observation sans filtre solaire certifié (ISO 12312-2).</div>
+
+<div class="card">
+  <div class="filters">
+    <label><input type="checkbox" id="fSun" checked> Soleil</label>
+    <label><input type="checkbox" id="fMoon" checked> Lune</label>
+    <label>Hauteur min. de l'astre <select id="fAlt"><option value="3">3°</option><option value="10" selected>10° (bonnes conditions)</option><option value="20">20°</option></select></label>
+    <label><input type="checkbox" id="fAll"> Afficher toutes les bandes</label>
+    <button id="redo">Recalculer</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>1 · Bandes d'observation (cliquez une ligne du tableau)</h2>
+  <div id="map"></div>
+  <small>Orange clair : bande où l'ISS traverse le disque. Orange foncé : bande centrale (ISS proche du centre, meilleures conditions). Tirets : ligne centrale ; survolez ses points pour l'heure approximative. Cliquez sur la carte ou déplacez le marqueur bleu pour choisir votre lieu.</small>
+</div>
+
+<div class="card wrap">
+  <table>
+    <thead><tr><th>Date et heure (près d'Altorf)</th><th>Astre</th><th>Hauteur</th><th>Azimut</th><th>Ligne centrale</th><th>Bande (largeur)</th><th>Fiabilité</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>2 · Calcul précis pour votre lieu</h2>
+  <div class="filters">
+    <span id="pickpos"></span>
+    <label>Altitude (m) <input type="number" id="pickh" value="170" min="0" max="1500"></label>
+  </div>
+  <div class="wrap"><table>
+    <thead><tr><th>Heure exacte (Paris)</th><th>Astre</th><th>Résultat</th><th>Séparation min.</th><th>Durée</th><th>Hauteur</th><th>Azimut</th><th>Fiabilité</th></tr></thead>
+    <tbody id="prows"></tbody>
+  </table></div>
+</div>
+</main>
+
+<script>
+window.addEventListener('error', e => {const el = document.getElementById('tleinfo'); if (el) el.textContent = 'Erreur : ' + e.message;});
+const D = Math.PI / 180, ZONE = 30, DAYS = 61;
+const mk = (lat, lon, h) => ({lat, lon, h, obs: new Astronomy.Observer(lat, lon, h), gd: {longitude: lon * D, latitude: lat * D, height: h / 1000}});
+const home = mk(48.535, 7.500, 170);
+const $ = id => document.getElementById(id);
+const fmt = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 1});
+const fmt2 = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 2});
+const fmtT = new Intl.DateTimeFormat('fr-FR', {timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 1});
+const SOURCES = [
+  ['CelesTrak', 'https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=TLE', t => t],
+  ['wheretheiss.at', 'https://api.wheretheiss.at/v1/satellites/25544/tles?format=text', t => t],
+  ['tle.ivanstanojevic.me', 'https://tle.ivanstanojevic.me/api/tle/25544', t => {const j = JSON.parse(t); return j.line1 + '\n' + j.line2;}]
+];
+let tle = null, rec = null, events = [], run = 0, lastCompute = 0, sel = null, pick = null, pickMarker = null;
+
+/* ---------- TLE ---------- */
+function parseTLE(txt) {
+  const L = txt.split(/\r?\n/).map(s => s.trim());
+  const l1 = L.find(s => s.startsWith('1 25544')), l2 = L.find(s => s.startsWith('2 25544'));
+  if (!l1 || !l2) throw new Error('TLE invalide');
+  const yy = +l1.substr(18, 2), doy = +l1.substr(20, 12);
+  return {l1, l2, epoch: Date.UTC(yy < 57 ? 2000 + yy : 1900 + yy, 0, 1) + (doy - 1) * 864e5};
+}
+async function fetchTLE() {
+  for (const [name, url, conv] of SOURCES) {
+    try {
+      const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), 9000);
+      const r = await fetch(url, {signal: ctl.signal, cache: 'no-store'}); clearTimeout(to);
+      if (!r.ok) continue;
+      const t = parseTLE(conv(await r.text())); t.source = name;
+      try {localStorage.setItem('iss_tle', JSON.stringify(t));} catch (e) {}
+      return t;
+    } catch (e) {}
+  }
+  try {const c = JSON.parse(localStorage.getItem('iss_tle')); if (c) {c.source += ' (cache)'; return c;}} catch (e) {}
+  return null;
+}
+
+/* ---------- astronomie ---------- */
+function issAt(ms, s) {
+  const d = new Date(ms), pv = satellite.propagate(rec, d);
+  if (!pv.position) return null;
+  const la = satellite.ecfToLookAngles(s.gd, satellite.eciToEcf(pv.position, satellite.gstime(d)));
+  return {az: la.azimuth / D, alt: la.elevation / D, rng: la.rangeSat};
+}
+function issEcf(ms) {
+  const d = new Date(ms), pv = satellite.propagate(rec, d);
+  return pv.position ? satellite.eciToEcf(pv.position, satellite.gstime(d)) : null;
+}
+function bodyAt(name, ms, s) {
+  const d = new Date(ms), e = Astronomy.Equator(name, d, s.obs, true, true);
+  const h = Astronomy.Horizon(d, s.obs, e.ra, e.dec, null);
+  return {az: h.azimuth, alt: h.altitude, rad: Math.asin((name === 'Sun' ? 696000 : 1737.4) / (e.dist * 149597870.7)) / D};
+}
+function sep(a1, h1, a2, h2) {
+  const v = (a, h) => [Math.cos(h * D) * Math.cos(a * D), Math.cos(h * D) * Math.sin(a * D), Math.sin(h * D)];
+  const p = v(a1, h1), q = v(a2, h2);
+  const c = [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]];
+  return Math.atan2(Math.hypot(...c), p[0] * q[0] + p[1] * q[1] + p[2] * q[2]) / D;
+}
+function scanMin(name, from, to, step, s) {
+  let best = {s: 1e9, t: from};
+  for (let t = from; t <= to; t += step) {
+    const i = issAt(t, s); if (!i) continue;
+    const b = bodyAt(name, t, s), v = sep(i.az, i.alt, b.az, b.alt);
+    if (v < best.s) best = {s: v, t};
+  }
+  return best;
+}
+/* ---------- ligne centrale : points du sol d'où l'astre est exactement derrière l'ISS ---------- */
+const WA = 6378.137, WB = 6356.752, WE2 = 0.00669437999;
+function ecfGeo(x, y, z) {
+  const p = Math.hypot(x, y); let lat = Math.atan2(z, p * (1 - WE2));
+  for (let k = 0; k < 5; k++) {const N = WA / Math.sqrt(1 - WE2 * Math.sin(lat) ** 2), h = p / Math.cos(lat) - N; lat = Math.atan2(z, p * (1 - WE2 * N / (N + h)));}
+  return [lat / D, Math.atan2(y, x) / D];
+}
+function dirEcf(az, alt, s) {
+  const f = s.lat * D, l = s.lon * D, e = Math.sin(az * D) * Math.cos(alt * D), n = Math.cos(az * D) * Math.cos(alt * D), u = Math.sin(alt * D);
+  const E = [-Math.sin(l), Math.cos(l), 0], N = [-Math.sin(f) * Math.cos(l), -Math.sin(f) * Math.sin(l), Math.cos(f)], U = [Math.cos(f) * Math.cos(l), Math.cos(f) * Math.sin(l), Math.sin(f)];
+  return [0, 1, 2].map(k => e * E[k] + n * N[k] + u * U[k]);
+}
+function ground(X, u, hm) {
+  const A = WA + hm / 1000, B = WB + hm / 1000, d = [-u[0], -u[1], -u[2]];
+  const a = (d[0] ** 2 + d[1] ** 2) / A ** 2 + d[2] ** 2 / B ** 2;
+  const b = 2 * ((X.x * d[0] + X.y * d[1]) / A ** 2 + X.z * d[2] / B ** 2);
+  const c = (X.x ** 2 + X.y ** 2) / A ** 2 + X.z ** 2 / B ** 2 - 1, k = b * b - 4 * a * c;
+  if (k < 0) return null;
+  const l = (-b - Math.sqrt(k)) / (2 * a);
+  return {P: [X.x + l * d[0], X.y + l * d[1], X.z + l * d[2]], rng: l};
+}
+const en = (lat, lon) => [(lon - home.lon) * D * Math.cos(home.lat * D) * 6371, (lat - home.lat) * D * 6371];
+function centerline(name, tm) {
+  const b1 = bodyAt(name, tm - 12000, home), b2 = bodyAt(name, tm + 12000, home), pts = [];
+  for (let t = tm - 12000; t <= tm + 12000; t += 100) {
+    const f = (t - tm + 12000) / 24000, X = issEcf(t); if (!X) continue;
+    const g = ground(X, dirEcf(b1.az + (b2.az - b1.az) * f, b1.alt + (b2.alt - b1.alt) * f, home), home.h); if (!g) continue;
+    const [lat, lon] = ecfGeo(...g.P), [dx, dy] = en(lat, lon);
+    if (Math.hypot(dx, dy) < 60) pts.push({t, lat, lon, dx, dy, rng: g.rng});
+  }
+  return pts;
+}
+function analyse(name, tc) {
+  let m = scanMin(name, tc - 11000, tc + 11000, 1000, home);
+  const i0 = issAt(m.t, home), b0 = bodyAt(name, m.t, home);
+  if (!i0 || i0.alt < 1 || b0.alt < 1) return null;
+  if ((m.s - 0.6) * D * i0.rng > ZONE + b0.rad * D * i0.rng + 6) return null; // rejet rapide
+  m = scanMin(name, m.t - 1500, m.t + 1500, 100, home);
+  m = scanMin(name, m.t - 150, m.t + 150, 5, home);
+  const b = bodyAt(name, m.t, home), i = issAt(m.t, home);
+  if (!i || i.alt < 3 || b.alt < 3 || m.s * D * i.rng > ZONE + b.rad * D * i.rng + 6) return null;
+  const pts = centerline(name, m.t); if (!pts.length) return null;
+  const c = pts.reduce((a, p) => Math.hypot(p.dx, p.dy) < Math.hypot(a.dx, a.dy) ? p : a);
+  const hw = b.rad * D * c.rng, dist = Math.hypot(c.dx, c.dy);
+  if (dist > ZONE + hw) return null;
+  return {t: c.t, body: name, alt: b.alt, az: b.az, rad: b.rad, hw, dist, brg: (Math.atan2(c.dx, c.dy) / D + 360) % 360, pts,
+          phase: name === 'Moon' ? Astronomy.Illumination('Moon', new Date(m.t)).phase_fraction : null};
+}
+
+/* ---------- calcul annuel ---------- */
+async function compute() {
+  if (!rec) return;
+  const token = ++run, t0 = Date.now(), t1 = t0 + DAYS * 864e5, found = [], cache = {}, st = {Sun: [], Moon: []};
+  const bc = (n, ms) => {const k = Math.floor(ms / 3e5); return cache[n + k] || (cache[n + k] = bodyAt(n, (k + .5) * 3e5, home));};
+  let t = t0, yl = performance.now();
+  $('stat').textContent = 'Calcul en cours…';
+  while (t < t1) {
+    const i = issAt(t, home);
+    if (!i || i.alt < -30) {st.Sun = []; st.Moon = []; t += 60000;}
+    else {
+      for (const n of ['Sun', 'Moon']) {
+        const b = i.alt > -2 ? bc(n, t) : null;
+        if (b && b.alt > -2) {
+          const a = st[n]; a.push({t, s: sep(i.az, i.alt, b.az, b.alt)}); if (a.length > 3) a.shift();
+          if (a.length === 3 && a[1].s < a[0].s && a[1].s <= a[2].s && a[1].s < 8) {
+            const ev = analyse(n, a[1].t);
+            if (ev && !found.some(f => f.body === n && Math.abs(f.t - ev.t) < 60000)) found.push(ev);
+          }
+        } else st[n] = [];
+      }
+      t += 10000;
+    }
+    if (performance.now() - yl > 40) {
+      $('prog').style.width = (100 * (t - t0) / (t1 - t0)) + '%';
+      await new Promise(r => setTimeout(r)); yl = performance.now();
+      if (token !== run) return;
+    }
+  }
+  events = found.sort((a, b) => a.t - b.t); lastCompute = Date.now();
+  $('prog').style.width = '100%'; sel = null; render();
+}
+
+/* ---------- affichage ---------- */
+const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'], card = a => dirs[Math.round(a / 45) % 8];
+function rel(ms) {const d = (ms - tle.epoch) / 864e5; return d <= 3 ? ['Bonne', 'ok'] : d <= 10 ? ['Moyenne', 'mid'] : ['Indicative', 'lo'];}
+const filtered = () => events.filter(e => (e.body === 'Sun' ? $('fSun').checked : $('fMoon').checked) && e.alt >= +$('fAlt').value);
+function render() {
+  const f = filtered();
+  if (!f.includes(sel)) sel = f[0] || null;
+  $('rows').innerHTML = f.map(e => {
+    const r = rel(e.t);
+    return `<tr data-i="${events.indexOf(e)}" class="${e === sel ? 's' : ''}"><td class="b">${fmt.format(e.t)}</td>
+    <td>${e.body === 'Sun' ? '☀️ Soleil' : '🌙 Lune (' + Math.round(e.phase * 100) + '%)'}</td><td>${e.alt.toFixed(0)}°</td><td>${e.az.toFixed(0)}° ${card(e.az)}</td>
+    <td>${e.dist.toFixed(1)} km au ${card(e.brg)}</td><td>${(2 * e.hw).toFixed(1)} km (centrale ${e.hw.toFixed(1)} km)</td><td class="${r[1]} b">${r[0]}</td></tr>`;
+  }).join('') || '<tr><td colspan="7">Aucune bande pour ces filtres.</td></tr>';
+  $('stat').innerHTML = `<b>${events.length}</b> bandes traversent la zone<br><small>Calculé le ${fmt.format(lastCompute).slice(0, -2)} · ${f.length} affichées</small>`;
+  draw(); tick(); pickResults();
+}
+function tick() {
+  const nx = filtered().find(e => e.t > Date.now());
+  if (!nx) {$('next').textContent = events.length ? 'Aucune' : '…'; $('nextd').textContent = ''; return;}
+  const s = Math.floor((nx.t - Date.now()) / 1000), d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  $('next').textContent = `dans ${d ? d + ' j ' : ''}${h} h ${m} min ${s % 60} s`;
+  $('nextd').textContent = `${nx.body === 'Sun' ? 'Soleil' : 'Lune'} – ${fmt.format(nx.t)}`;
+}
+
+/* ---------- carte ---------- */
+const map = L.map('map').setView([home.lat, home.lon], 9);
+const esri = (n, t) => L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/' + n + '/MapServer/tile/{z}/{y}/{x}', {maxZoom: 17, attribution: 'Tuiles © Esri – ' + t});
+const bases = {
+  'Topographique (Esri)': esri('World_Topo_Map', 'Esri, HERE, Garmin, OpenStreetMap contributors'),
+  'Rues (Esri)': esri('World_Street_Map', 'Esri, HERE, Garmin, OpenStreetMap contributors'),
+  'Satellite (Esri)': esri('World_Imagery', 'Maxar, Earthstar Geographics'),
+  'OpenStreetMap': L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '© OpenStreetMap contributors'}),
+  'OpenTopoMap': L.tileLayer('https://tile.opentopomap.org/{z}/{x}/{y}.png', {maxZoom: 17, attribution: '© OpenStreetMap, SRTM, © OpenTopoMap (CC-BY-SA)'})
+};
+bases['Topographique (Esri)'].addTo(map);
+L.control.layers(bases, null, {collapsed: true}).addTo(map);
+const zone = L.circle([home.lat, home.lon], {radius: ZONE * 1000, color: '#2563eb', weight: 1.5, fill: false, dashArray: '4 4'}).addTo(map);
+map.fitBounds(L.latLng(home.lat, home.lon).toBounds(ZONE * 2200));
+L.circleMarker([home.lat, home.lon], {radius: 4, color: '#2563eb'}).bindTooltip('Altorf').addTo(map);
+const evLayer = L.layerGroup().addTo(map);
+const off = (p, dx, dy) => [p.lat + dy / 111.2, p.lon + dx / (111.2 * Math.cos(p.lat * D))];
+function band(e, k, style) {
+  const P = e.pts, A_ = [], B_ = [];
+  P.forEach((p, i) => {
+    const a = P[Math.max(0, i - 1)], b = P[Math.min(P.length - 1, i + 1)];
+    let tx = b.dx - a.dx, ty = b.dy - a.dy; const n = Math.hypot(tx, ty) || 1; tx /= n; ty /= n;
+    const w = k * e.rad * D * p.rng;
+    A_.push(off(p, -ty * w, tx * w)); B_.push(off(p, ty * w, -tx * w));
+  });
+  L.polygon(A_.concat(B_.reverse()), style).addTo(evLayer);
+}
+function draw() {
+  evLayer.clearLayers();
+  if ($('fAll').checked) filtered().forEach(e => L.polyline(e.pts.map(p => [p.lat, p.lon]), {color: '#888', weight: 1, opacity: .6}).addTo(evLayer));
+  if (!sel) return;
+  band(sel, 1, {color: '#f97316', weight: 1, fillOpacity: .22});
+  band(sel, .5, {color: '#c2410c', weight: 0, fillOpacity: .35});
+  L.polyline(sel.pts.map(p => [p.lat, p.lon]), {color: '#c2410c', weight: 2, dashArray: '6 4'}).addTo(evLayer);
+  sel.pts.forEach((p, i) => {if (i % 15 === 0) L.circleMarker([p.lat, p.lon], {radius: 4, color: '#c2410c', fillOpacity: 1}).bindTooltip(fmtT.format(p.t)).addTo(evLayer);});
+}
+function setPick(lat, lon) {
+  pick = {lat, lon};
+  if (!pickMarker) {
+    pickMarker = L.marker([lat, lon], {draggable: true}).addTo(map);
+    pickMarker.on('dragend', () => {const p = pickMarker.getLatLng(); setPick(p.lat, p.lng);});
+  } else pickMarker.setLatLng([lat, lon]);
+  pickResults();
+}
+map.on('click', e => setPick(e.latlng.lat, e.latlng.lng));
+$('rows').addEventListener('click', e => {const tr = e.target.closest('tr'); if (tr && tr.dataset.i) {sel = events[+tr.dataset.i]; render();}});
+
+/* ---------- calcul précis au lieu choisi ---------- */
+function pickResults() {
+  const tb = $('prows');
+  if (!pick || !rec) {$('pickpos').textContent = 'Cliquez sur la carte pour choisir un lieu.'; tb.innerHTML = ''; return;}
+  const s = mk(pick.lat, pick.lon, +$('pickh').value || 0), [px, py] = en(pick.lat, pick.lon);
+  $('pickpos').innerHTML = `<b>Lieu :</b> ${pick.lat.toFixed(4)}° N, ${pick.lon.toFixed(4)}° E (${Math.hypot(px, py).toFixed(1)} km d'Altorf)`;
+  const out = [];
+  for (const e of filtered()) {
+    const n = e.pts.reduce((a, p) => Math.hypot(p.dx - px, p.dy - py) < Math.hypot(a.dx - px, a.dy - py) ? p : a);
+    if (Math.hypot(n.dx - px, n.dy - py) > e.hw + 3) continue;
+    let m = scanMin(e.body, n.t - 4000, n.t + 4000, 50, s);
+    m = scanMin(e.body, m.t - 100, m.t + 100, 2, s);
+    const b = bodyAt(e.body, m.t, s), i = issAt(m.t, s), i1 = issAt(m.t - 500, s), i2 = issAt(m.t + 500, s);
+    if (!i || i.alt <= 0 || b.alt <= 0) continue;
+    const spd = sep(i1.az, i1.alt, i2.az, i2.alt);
+    out.push({t: m.t, body: e.body, s: m.s, rad: b.rad, alt: b.alt, az: b.az, dur: m.s < b.rad ? 2 * Math.sqrt(b.rad ** 2 - m.s ** 2) / spd : 0, off: m.s * D * i.rng, phase: e.phase});
+  }
+  tb.innerHTML = out.map(o => {
+    const r = rel(o.t), tr = o.s < o.rad;
+    return `<tr class="${tr ? 't' : ''}"><td class="b">${fmt2.format(o.t)}</td><td>${o.body === 'Sun' ? '☀️ Soleil' : '🌙 Lune (' + Math.round(o.phase * 100) + '%)'}</td>
+    <td class="b">${tr ? (o.s < o.rad / 2 ? 'Transit centré' : 'Transit') : 'Frôlement (≈ ' + o.off.toFixed(1) + ' km à côté)'}</td>
+    <td>${o.s.toFixed(3)}° (${(100 * o.s / o.rad).toFixed(0)} % du rayon)</td><td>${o.dur ? o.dur.toFixed(2) + ' s' : '–'}</td>
+    <td>${o.alt.toFixed(0)}°</td><td>${o.az.toFixed(0)}° ${card(o.az)}</td><td class="${r[1]} b">${r[0]}</td></tr>`;
+  }).join('') || '<tr><td colspan="8">Aucune bande ne passe par ce lieu (avec les filtres actuels). Déplacez le marqueur sur une bande.</td></tr>';
+}
+$('pickh').addEventListener('change', pickResults);
+
+/* ---------- mise à jour ---------- */
+async function refresh(force) {
+  const t = await fetchTLE();
+  if (!t) {$('tle').innerHTML = '<span class="lo b">Indisponible</span>'; $('tleinfo').textContent = 'Aucune source accessible. Vérifiez la connexion internet.'; return;}
+  const changed = !tle || t.epoch !== tle.epoch;
+  tle = t; rec = satellite.twoline2satrec(t.l1, t.l2);
+  $('tle').innerHTML = `<b>${t.source}</b>`;
+  $('tleinfo').textContent = `Époque : ${fmt.format(t.epoch).slice(0, -2)} (il y a ${((Date.now() - t.epoch) / 36e5).toFixed(1)} h)`;
+  if (force || changed || Date.now() - lastCompute > 12 * 36e5) compute();
+}
+['fSun', 'fMoon', 'fAlt', 'fAll'].forEach(id => $(id).addEventListener('change', render));
+$('redo').addEventListener('click', () => refresh(true));
+setInterval(tick, 1000);
+setInterval(() => refresh(false), 36e5);
+setPick(home.lat, home.lon);
+refresh(true);
+</script>
+</body>
+</html>
